@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 def init_and_fit_model(train_X, train_Y, test_X, test_Y, epochs, batch_size):
     model = Sequential()
     model.add(LSTM(50, input_shape=(train_X.shape[1], train_X.shape[2])))
-    model.add(Dense(train_X.shape[2]))
+    model.add(Dense(train_Y.shape[1]))
     model.compile(loss='mae', optimizer='adam')
 
     history = model.fit(train_X, train_Y,
@@ -20,11 +20,16 @@ def init_and_fit_model(train_X, train_Y, test_X, test_Y, epochs, batch_size):
     return model
 
 
-def evaluate_model(model, scaler_model, test_X, test_y, plot=True):
+def evaluate_model(model, scaler_model, test_X, test_y, indexes, plot=True):
     y_hat = model.predict(test_X)
     # invert scaling for forecast
-    inv_yhat = scaler_model.inverse_transform(y_hat)
-    inv_yreal = scaler_model.inverse_transform(test_y)
+    inv_yhat = []
+    inv_yreal = []
+    for i, y in enumerate(indexes):
+        inv_yhat.append(scaler_model.data_range_[y] * y_hat[:, i] + scaler_model.data_min_[y])
+        inv_yreal.append(scaler_model.data_range_[y] * test_y[:, i] + scaler_model.data_min_[y])
+    inv_yhat = np.array(inv_yhat).T
+    inv_yreal = np.array(inv_yreal).T
 
     # calculate RMSE
     rmse = sqrt(mean_squared_error(inv_yreal, inv_yhat))
@@ -49,9 +54,9 @@ def evaluate_model(model, scaler_model, test_X, test_y, plot=True):
 if __name__ == '__main__':
     epochs = 20
     batch_size = 72
-    train_X, train_y, test_X, test_y, scaler_model = preprocess_and_create_data()
+    train_X, train_y, test_X, test_y, scaler_model, indexes = preprocess_and_create_data()
     model = init_and_fit_model(train_X, train_y, test_X, test_y, epochs, batch_size)
-    evaluate_model(model, scaler_model, test_X, test_y, plot=True)
+    evaluate_model(model, scaler_model, test_X, test_y, indexes, plot=False)
 
 
 
