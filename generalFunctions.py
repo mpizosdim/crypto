@@ -9,19 +9,21 @@ from sklearn.preprocessing import MinMaxScaler
 _starting_date = "2010-01-01"
 _data_folder = "/home/dimitris//Documents/others/finance_notes/data/crypto/"
 
-def downloadCryptoList100():
+
+def downloadCryptoList100(top=100, with_info=True):
     r = requests.get("https://coinmarketcap.com/", timeout=30)
     soup = BeautifulSoup(r.text, 'html.parser')
     rows = soup.find_all("a", {"class": "currency-name-container"})
     crypto_names = {}
-    for row in rows:
+    for row in rows[:top]:
         crypto_name = str(row.contents[0].replace(" ", "-"))
-        r2 = requests.get("https://coinmarketcap.com/currencies/%s"%crypto_name, timeout=30)
-        soup2 = BeautifulSoup(r2.text, 'html.parser')
-        tags = [x.text for x in
-         soup2.find_all("div", {"class": "container"})[1].find_all("span", {"class": "label label-warning"})]
-
-        crypto_names[crypto_name] = tags
+        if with_info:
+            r2 = requests.get("https://coinmarketcap.com/currencies/%s"%crypto_name, timeout=30)
+            soup2 = BeautifulSoup(r2.text, 'html.parser')
+            tags = [x.text for x in soup2.find_all("div", {"class": "container"})[1].find_all("span", {"class": "label label-warning"})]
+            crypto_names[crypto_name] = tags
+        else:
+            crypto_names[crypto_name] = []
     return crypto_names
 
 
@@ -143,26 +145,21 @@ def replace_by_nan(df, value):
     return df.replace(value, np.nan)
 
 
-def series_to_supervised(data, column_names, n_in=1, n_out=1, dropnan=True):
-    n_vars = 1 if type(data) is list else data.shape[1]
+def series_to_supervised(data, column_names, predict_indexes, predict_names, n_in=1, n_out=1, dropnan=True):
     data = pd.DataFrame(data)
     cols, names = list(), list()
-    #column_names = list(data.columns.values)
     # input sequence (t-n, ... t-1)
     for i in range(n_in, 0, -1):
         cols.append(data.shift(i))
-        #names += [('var%d(t-%d)' % (j + 1, i)) for j in range(n_vars)]
         names += [('%s(t-%d)' % (j, i)) for j in column_names]
 
     # forecast sequence (t, t+1, ... t+n)
     for i in range(0, n_out):
-        cols.append(data.shift(-i))
+        cols.append(data[predict_indexes].shift(-i))
         if i == 0:
-            #names += [('var%d(t)' % (j + 1)) for j in range(n_vars)]
-            names += [('%s(t)' % (j)) for j in column_names]
+            names += [('%s(t)' % (j)) for j in predict_names]
         else:
-            #names += [('var%d(t+%d)' % (j + 1, i)) for j in range(n_vars)]
-            names += [('%s(t+%d)' % (j, i)) for j in column_names]
+            names += [('%s(t+%d)' % (j, i)) for j in predict_names]
 
     # put it all together
     agg = pd.concat(cols, axis=1)
@@ -179,7 +176,7 @@ def series_to_supervised(data, column_names, n_in=1, n_out=1, dropnan=True):
 
 
 def main_crawl_crypto():
-    top100crypto = downloadCryptoList100()
+    top100crypto = downloadCryptoList100(False)
     for crp in list(top100crypto.keys()):
         crp = dummy_translator(crp)
         count = 1
@@ -194,9 +191,11 @@ def main_crawl_crypto():
 
 
 def preprocess_and_create_data():
-    top100crypto = downloadCryptoList100()
+    top100crypto = downloadCryptoList100(15, False)
     top100crypto_updated = [dummy_translator(crp) for crp in list(top100crypto.keys())]
-    #top100crypto_updated = ['bitcoin', 'litecoin', 'dogecoin', 'emercoin']# 'ethereum', 'ripple', 'litecoin', 'dash', 'nem']
+    top100crypto_updated.sort()
+    predict_currencies = ['bitcoin', 'ethereum', 'ripple']
+    predict_currencies.sort()
     #prices
     prices_data = load_crypto_data(top100crypto_updated, "price")
     prices_norm_data = normalize_data_by_first(prices_data)
@@ -205,24 +204,24 @@ def preprocess_and_create_data():
     # pre-processing
     prices_perc = prices_perc.astype("float32")
     column_names = list(prices_perc.columns.values)
+    indexes = [i for i, x in enumerate(column_names) if x in predict_currencies]
     prices_perc.dropna(inplace=True)
 
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaler_model = scaler.fit(prices_perc)
     scaled = scaler_model.transform(prices_perc)
-    reframed = series_to_supervised(scaled, column_names)
-
+    reframed = series_to_supervised(scaled, column_names, indexes, predict_currencies)
 
     values = reframed.values
-    n_train_days = 1150#365 * 2
+    n_train_days = 88#365 * 2
     train = values[:n_train_days, :]
     test = values[n_train_days:, :]
-    train_x, train_y = train[:, :-len(column_names)], train[:, len(column_names):]
-    test_x, test_y = test[:, :-len(column_names)], test[:, len(column_names):]
+    train_x, train_y = train[:, :-len(indexes)], train[:, len(column_names):]
+    test_x, test_y = test[:, :-len(indexes)], test[:, len(column_names):]
     train_X = train_x.reshape((train_x.shape[0], 1, train_x.shape[1]))
     test_X = test_x.reshape((test_x.shape[0], 1, test_x.shape[1]))
     print(train_X.shape, train_y.shape, test_X.shape, test_y.shape)
-    return train_X, train_y, test_X, test_y, scaler_model
+    return train_X, train_y, test_X, test_y, scaler_model, indexes
 
 
 
@@ -242,11 +241,6 @@ def preprocess_and_create_data():
     # top_100_volume = volume_data.sum(axis=1)
     # top_100_mrk_cap = mrkcap_data.sum(axis=1)
 
-
-
-    a = 1+1
-
-
 if __name__ == '__main__':
-    main_crawl_crypto()
-    #data = preprocess_and_create_data()
+    #main_crawl_crypto()
+    data = preprocess_and_create_data()
